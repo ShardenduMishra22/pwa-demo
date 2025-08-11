@@ -8,9 +8,17 @@ webpush.setVapidDetails(
   process.env.VAPID_PRIVATE_KEY!
 )
 
-let subscription: any = null
+interface WebPushSubscription {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
 
-export async function subscribeUser(sub: any) {
+let subscription: WebPushSubscription | null = null
+
+export async function subscribeUser(sub: WebPushSubscription) {
   subscription = sub
   // In a production environment, you would want to store the subscription in a database
   // For example: await db.subscriptions.create({ data: sub })
