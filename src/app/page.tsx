@@ -2,6 +2,16 @@
 
 import { useState, useEffect } from 'react'
 import { subscribeUser, unsubscribeUser, sendNotification } from './actions'
+import { logPWADebugInfo, forcePWAPrompt } from './pwa-debug'
+
+// Type definition for beforeinstallprompt event
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>
+  userChoice: Promise<{
+    outcome: 'accepted' | 'dismissed'
+    platform: string
+  }>
+}
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -115,6 +125,9 @@ function PushNotificationManager() {
 function InstallPrompt() {
   const [isIOS, setIsIOS] = useState(false)
   const [isStandalone, setIsStandalone] = useState(false)
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+  const [canInstall, setCanInstall] = useState(false)
+  const [debugInfo, setDebugInfo] = useState('')
 
   useEffect(() => {
     setIsIOS(
@@ -122,31 +135,223 @@ function InstallPrompt() {
     )
 
     setIsStandalone(window.matchMedia('(display-mode: standalone)').matches)
-  }, [])
+
+    // Debug information for development
+    const isDev = process.env.NODE_ENV === 'development'
+    if (isDev) {
+      const debugDetails = [
+        `UA: ${navigator.userAgent.slice(0, 50)}...`,
+        `Standalone: ${window.matchMedia('(display-mode: standalone)').matches}`,
+        `SW Support: ${'serviceWorker' in navigator}`,
+        `Protocol: ${window.location.protocol}`,
+        `Host: ${window.location.host}`
+      ]
+      setDebugInfo(debugDetails.join(' | '))
+    }
+
+    // Listen for the beforeinstallprompt event
+    const handleBeforeInstallPrompt = (e: Event) => {
+      console.log('🎯 beforeinstallprompt event fired!', e)
+      // Prevent the mini-infobar from appearing on mobile
+      e.preventDefault()
+      // Stash the event so it can be triggered later
+      setDeferredPrompt(e as BeforeInstallPromptEvent)
+      setCanInstall(true)
+      
+      if (isDev) {
+        console.log('✅ Install prompt is now available')
+      }
+    }
+
+    // Listen for the appinstalled event
+    const handleAppInstalled = () => {
+      console.log('🎉 PWA was installed')
+      setCanInstall(false)
+      setDeferredPrompt(null)
+    }
+
+    // Check if already installed
+    const checkIfInstalled = () => {
+      // Check for display-mode: standalone
+      const isStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
+      // Check for iOS standalone mode
+      const isIOSStandalone = (window.navigator as typeof navigator & { standalone?: boolean }).standalone === true
+      
+      if (isStandaloneMode || isIOSStandalone) {
+        console.log('✅ App is already installed')
+        setIsStandalone(true)
+      }
+    }
+
+    checkIfInstalled()
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
+    window.addEventListener('appinstalled', handleAppInstalled)
+
+    // For development: Log when the component mounts
+    if (isDev) {
+      console.log('🔧 InstallPrompt component mounted')
+      
+      // Check PWA criteria in development
+      setTimeout(() => {
+        if (!canInstall) {
+          console.log('ℹ️ beforeinstallprompt not fired. This is normal in development.')
+          console.log('💡 To trigger it: Visit multiple times, wait 30+ seconds, or use Chrome DevTools')
+        }
+      }, 2000)
+    }
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
+      window.removeEventListener('appinstalled', handleAppInstalled)
+    }
+  }, [canInstall]) // Added canInstall to dependencies
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) {
+      // Fallback for browsers that don't support beforeinstallprompt
+      alert('To install this app:\n\n• Chrome: Click the install icon in the address bar\n• Firefox: Look for "Add to Home Screen" in the menu\n• Safari: Use "Add to Home Screen" from the share menu')
+      return
+    }
+
+    try {
+      // Show the install prompt
+      await deferredPrompt.prompt()
+
+      // Wait for the user to respond to the prompt
+      const { outcome } = await deferredPrompt.userChoice
+      
+      if (outcome === 'accepted') {
+        console.log('✅ User accepted the install prompt')
+      } else {
+        console.log('❌ User dismissed the install prompt')
+      }
+
+      // Clear the deferredPrompt
+      setDeferredPrompt(null)
+      setCanInstall(false)
+    } catch (error) {
+      console.error('Error during installation:', error)
+    }
+  }
+
+  const forceRefreshInstallState = () => {
+    // Clear current state
+    setDeferredPrompt(null)
+    setCanInstall(false)
+    
+    // Check again after a brief delay
+    setTimeout(() => {
+      const isStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
+      const isIOSStandalone = (window.navigator as typeof navigator & { standalone?: boolean }).standalone === true
+      setIsStandalone(isStandaloneMode || isIOSStandalone)
+      
+      console.log('🔄 Install state refreshed')
+    }, 100)
+  }
 
   if (isStandalone) {
-    return null // Don't show install button if already installed
+    return (
+      <div className="bg-white p-6 rounded-lg shadow-md max-w-md">
+        <h3 className="text-xl font-semibold mb-4">App Installed</h3>
+        <p className="text-green-600">✅ This app is already installed on your device!</p>
+      </div>
+    )
   }
 
   return (
     <div className="bg-white p-6 rounded-lg shadow-md max-w-md">
       <h3 className="text-xl font-semibold mb-4">Install App</h3>
-      <button className="bg-purple-500 text-white px-4 py-2 rounded mb-4 hover:bg-purple-600">
-        Add to Home Screen
-      </button>
+      
+      {/* Development Debug Info */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="mb-4 p-3 bg-gray-100 rounded text-xs">
+          <div className="font-semibold mb-2">🔧 Dev Debug:</div>
+          <div className="text-gray-600 mb-2">{debugInfo}</div>
+          <div className="flex gap-2 flex-wrap">
+            <button 
+              onClick={forceRefreshInstallState}
+              className="bg-gray-500 text-white px-2 py-1 rounded text-xs hover:bg-gray-600"
+            >
+              🔄 Refresh
+            </button>
+            <button 
+              onClick={logPWADebugInfo}
+              className="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600"
+            >
+              📊 Debug Info
+            </button>
+            <button 
+              onClick={forcePWAPrompt}
+              className="bg-orange-500 text-white px-2 py-1 rounded text-xs hover:bg-orange-600"
+            >
+              🧪 Test Prompt
+            </button>
+          </div>
+        </div>
+      )}
+      
+      {canInstall && !isIOS && (
+        <button 
+          onClick={handleInstallClick}
+          className="bg-purple-500 text-white px-4 py-2 rounded mb-4 hover:bg-purple-600 w-full"
+        >
+          📱 Install App
+        </button>
+      )}
+      
+      {!canInstall && !isIOS && (
+        <div className="mb-4">
+          <button 
+            onClick={handleInstallClick}
+            className="bg-blue-500 text-white px-4 py-2 rounded mb-2 w-full hover:bg-blue-600"
+          >
+            📱 Install App (Manual)
+          </button>
+          <p className="text-gray-600 text-sm mb-2">
+            Install this app on your device for the best experience!
+          </p>
+          
+          {process.env.NODE_ENV === 'development' && (
+            <div className="text-xs text-yellow-700 bg-yellow-50 p-2 rounded mb-2">
+              <strong>🛠️ Development Mode:</strong> The install prompt may not always appear due to:
+              <br />• Service Worker registration timing
+              <br />• Browser engagement heuristics 
+              <br />• Page refresh clearing browser state
+              <br />• HTTPS requirements (use localhost or ngrok)
+            </div>
+          )}
+          
+          <p className="text-xs text-gray-500">
+            💡 Automatic install prompt will appear when:
+            <br />• You visit the site multiple times
+            <br />• You spend time engaging with the page
+            <br />• Your browser supports PWA installation
+          </p>
+        </div>
+      )}
+      
       {isIOS && (
-        <p className="text-sm text-gray-600">
-          To install this app on your iOS device, tap the share button
-          <span role="img" aria-label="share icon">
-            {' '}
-            ⎋{' '}
-          </span>
-          and then &ldquo;Add to Home Screen&rdquo;
-          <span role="img" aria-label="plus icon">
-            {' '}
-            ➕{' '}
-          </span>.
-        </p>
+        <div>
+          <button 
+            className="bg-purple-500 text-white px-4 py-2 rounded mb-4 hover:bg-purple-600 w-full opacity-50 cursor-not-allowed"
+            disabled
+          >
+            📱 Install App (iOS)
+          </button>
+          <p className="text-sm text-gray-600">
+            To install this app on your iOS device, tap the share button
+            <span role="img" aria-label="share icon">
+              {' '}
+              ⎋{' '}
+            </span>
+            and then &ldquo;Add to Home Screen&rdquo;
+            <span role="img" aria-label="plus icon">
+              {' '}
+              ➕{' '}
+            </span>.
+          </p>
+        </div>
       )}
     </div>
   )
