@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { subscribeUser, unsubscribeUser, sendNotification } from '../test/actions'
-import { logPWADebugInfo, forcePWAPrompt } from '../test/pwa-debug'
+import { subscribeUser, unsubscribeUser, sendNotification } from './actions'
+import { logPWADebugInfo, forcePWAPrompt } from './pwa-debug'
 
 // Type definition for beforeinstallprompt event
 interface BeforeInstallPromptEvent extends Event {
