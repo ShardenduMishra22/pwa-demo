@@ -83,7 +83,7 @@ The app will be available at `http://localhost:3001` (or next available port)
 1. Tap the share button
 2. Select "Add to Home Screen"
 
-#### Mobile (Android Chrome):
+#### Mobile (Android Chrome)
 1. Tap the menu (three dots)
 2. Select "Add to Home Screen"
 
